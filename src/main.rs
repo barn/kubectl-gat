@@ -141,7 +141,9 @@ fn main() {
 
             // we reference containerstatuses so many times, it makes sense just to carve this off
             // and go with it.
-            let cs = n["status"]["containerStatuses"].as_array().unwrap();
+            let cs = n["status"]["containerStatuses"]
+                .as_array()
+                .expect(&format!("Didnt get a containerStatus: {:?}", n));
 
             let mut containersready: i32 = 0;
             let containerscount = cs.len() as i32;
@@ -219,9 +221,7 @@ fn main() {
             // age || datetime.now(timezone.utc) - datetime.fromisoformat(pod['metadata']['creationTimestamp'])
             let creationtime = n["metadata"]["creationTimestamp"].as_str().unwrap();
             let datetime: DateTime<Utc> = creationtime.parse().unwrap();
-            let end_time = chrono::offset::Utc::now();
-
-            let diff = end_time - datetime;
+            let diff = chrono::offset::Utc::now() - datetime;
 
             // do ugly string parsing on the string of the time delta, rather than doing it
             // properly
