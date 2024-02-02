@@ -3,12 +3,16 @@ use chrono::DateTime;
 use chrono::Utc;
 use clap::{Parser, Subcommand};
 use humantime::format_duration;
+use itertools::Itertools;
 use regex::Regex;
 use serde_json::Value;
 use std::process;
 use std::process::Command;
 use tabled::settings::{object::Columns, object::Rows, Disable, Padding, Style, Theme};
 use tabled::{Table, Tabled};
+
+const WORK_ECR: &str = "***REMOVED***";
+const WORK_ECR_SHORT: &str = "<clr-ecr>";
 
 // Pascal is "Keep all letters uppercase and indicate word boundaries with underscores."
 #[derive(Tabled)]
@@ -18,7 +22,7 @@ struct Pod {
     #[tabled(rename = "Ready")]
     containerstatus: String,
     status: String,
-    restarts: i32,
+    restarts: i64,
     age: String,
     images: String,
 }
@@ -27,7 +31,7 @@ fn build_pod(
     name: String,
     containerstatus: String,
     status: String,
-    restarts: i32,
+    restarts: i64,
     age: String,
     images: String,
 ) -> Pod {
@@ -112,13 +116,15 @@ fn main() {
 
     // maybe check output.status?
     if !output.status.success() {
-        match output.status.code() {
-            Some(code) => {
-                println!("failed to kubectl with {}", output.status);
-                process::exit(code);
-            }
-            None => {}
+        // match output.status.code() {
+        //     Some(code) => {
+        if let Some(code) = output.status.code() {
+            println!("failed to kubectl with {}", output.status);
+            process::exit(code);
         }
+        // }
+        // None => {}
+        // }
     }
 
     // println!("stdout: {}", String::from_utf8_lossy(&output.stdout));
@@ -133,10 +139,14 @@ fn main() {
             // println!("");
             // println!("some json: {}", n);
 
-            let mut containersready: i32 = 0;
-            let containerscount = n["status"]["containerStatuses"].as_array().unwrap().len() as i32;
+            // we reference containerstatuses so many times, it makes sense just to carve this off
+            // and go with it.
+            let cs = n["status"]["containerStatuses"].as_array().unwrap();
 
-            for c in n["status"]["containerStatuses"].as_array().unwrap() {
+            let mut containersready: i32 = 0;
+            let containerscount = cs.len() as i32;
+
+            for c in cs {
                 containersready += (c["ready"].as_bool() == Some(true)) as i32;
             }
 
@@ -145,23 +155,65 @@ fn main() {
             // name
             let name = n["metadata"]["name"].as_str().unwrap();
             // println!("name: {}", name);
-            //
+
+            // do we want to filter names?
             if !findmepls.is_empty() {
-                let findmere = Regex::new(format!(r"{}", findmepls).as_str()).unwrap();
+                let findmere = Regex::new(findmepls.to_string().as_str()).unwrap();
                 if !findmere.is_match(name) {
                     continue;
                 }
             }
 
             // status
-            let status = n["status"]["phase"].as_str().unwrap();
+            let mut status: String = n["status"]["phase"].as_str().unwrap().to_string();
+
+            if status != "Running" {
+                let mut statuses: Vec<String> = vec![];
+                for c in cs {
+                    if let Some(value) = c["state"]["waiting"]["reason"].as_str() {
+                        statuses.push(value.to_string())
+                    }
+                    // match c["state"]["waiting"]["reason"].as_str() {
+                    //     Some(value) => statuses.push(value.to_string()),
+                    //     None => {}
+                    // }
+                }
+                if !statuses.is_empty() {
+                    status = statuses
+                        .clone()
+                        .into_iter()
+                        .unique()
+                        .collect::<Vec<_>>()
+                        .join(", ")
+                        .to_string();
+                }
+                // I think this is the same as doing an unwrap(), but I only have to type it all
+                // out once, which is less work.
+                // let s: Vec<_> = cs
+                //     .iter()
+                //     .map(|x| x["state"]["waiting"]["reason"].as_str().unwrap())
+                //     .filter(|y| y != &"Running")
+                //     .collect();
+                // if !s.is_empty() {
+                //     let status = &s.join(", ");
+                // }
+                // match cs[0]["state"]["waiting"]["reason"].as_str() {
+                //     Some(inner) => status = inner,
+                //     _ => {}
+                // }
+            }
+
+            // state
             // println!("status: {}", status);
 
             // restarts || pod['status']['containerStatuses'][0]['restartCount']
-            let restartcount = n["status"]["containerStatuses"].as_array().unwrap()[0]
-                ["restartCount"]
-                .as_i64()
-                .unwrap() as i32;
+            let restartcount: i64 = cs
+                .iter()
+                .map(|x| x["restartCount"].as_i64().unwrap())
+                .collect::<Vec<i64>>()
+                .iter()
+                .sum::<i64>();
+            // let restartcount = cs[0]["restartCount"].as_i64().unwrap();
             // println!("restarts: {}", restartcount);
 
             // age || datetime.now(timezone.utc) - datetime.fromisoformat(pod['metadata']['creationTimestamp'])
@@ -181,11 +233,18 @@ fn main() {
 
             // image || "\n".join(list(map( lambda x: str(better_pods(x['image'])) , pod['spec']['containers'])))
             let mut images: Vec<String> = vec![];
-            let ree = Regex::new(r"301643779712\.dkr\.ecr\.us-east-1\.amazonaws\.com").unwrap();
+            let ree = Regex::new(WORK_ECR).unwrap();
             for c in n["spec"]["containers"].as_array().unwrap() {
-                let shorter_image = ree.replace_all(c["image"].as_str().unwrap(), "<clr-ecr>");
+                let shorter_image = ree.replace_all(c["image"].as_str().unwrap(), WORK_ECR_SHORT);
                 images.push(shorter_image.to_string());
             }
+
+            // we could return them all? but returning a unique list is going to save space. And
+            // this is meant to be as similar to `get pods` as possible
+            let mut images_sorted: Vec<String> = images.clone();
+            images_sorted.sort_unstable();
+            images_sorted.dedup();
+
             // if images.len() == 1 {
             //     println!("Image: {}", images[0]);
             // } else {
@@ -201,7 +260,7 @@ fn main() {
                 status.to_string(),
                 restartcount,
                 s_replaced.to_string(),
-                images[0].to_string(),
+                images_sorted.join("\n"),
             ))
         }
     }
@@ -218,7 +277,7 @@ fn main() {
         .with(style)
         .modify(Columns::first(), Padding::new(0, 0, 0, 0));
 
-    if args.no_headers == true {
+    if args.no_headers {
         ourtable.with(Disable::row(Rows::first()));
     }
 
