@@ -143,7 +143,7 @@ fn main() {
             // and go with it.
             let cs = n["status"]["containerStatuses"]
                 .as_array()
-                .expect(&format!("Didnt get a containerStatus: {:?}", n));
+                .expect("Didnt get a containerStatus");
 
             let mut containersready: i32 = 0;
             let containerscount = cs.len() as i32;
