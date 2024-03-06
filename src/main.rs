@@ -90,11 +90,6 @@ fn main() {
         }
     }
 
-    // println!("args {:?}", std::env::args());
-    // println!("looking for {}", findmepls);
-    // process::exit(0);
-    //
-
     // we have a whole subcommand mess, and then just call 'get pods' anyway
     let mut arr = vec!["get", "pods", "-o=json"];
     let mut ns = String::new();
@@ -103,12 +98,6 @@ fn main() {
         arr.push(&ns);
     }
 
-    // let output = Command::new("kubectl")
-    //     .arg("get")
-    //     .arg("pods")
-    //     .arg("-o=json")
-    //     .output()
-    //     .expect("failed to execute kubectl process");
     let output = Command::new("kubectl")
         .args(arr)
         .output()
@@ -127,12 +116,7 @@ fn main() {
         // }
     }
 
-    // println!("stdout: {}", String::from_utf8_lossy(&output.stdout));
-    // println!("status: {}", output.status);
-    // println!("stderr: {}", String::from_utf8_lossy(&output.stderr));
-
     let v: Value = serde_json::from_str(&String::from_utf8_lossy(&output.stdout)).unwrap();
-    // println!("some json: {}", v["items"]);
 
     if let Some(containers) = v["items"].as_array() {
         for n in containers {
@@ -151,8 +135,6 @@ fn main() {
             for c in cs {
                 containersready += (c["ready"].as_bool() == Some(true)) as i32;
             }
-
-            // println!("containers: {}/{}", containersready, containerscount);
 
             // name
             let name = n["metadata"]["name"].as_str().unwrap();
@@ -175,10 +157,6 @@ fn main() {
                     if let Some(value) = c["state"]["waiting"]["reason"].as_str() {
                         statuses.push(value.to_string())
                     }
-                    // match c["state"]["waiting"]["reason"].as_str() {
-                    //     Some(value) => statuses.push(value.to_string()),
-                    //     None => {}
-                    // }
                 }
                 if !statuses.is_empty() {
                     status = statuses
@@ -189,24 +167,7 @@ fn main() {
                         .join(", ")
                         .to_string();
                 }
-                // I think this is the same as doing an unwrap(), but I only have to type it all
-                // out once, which is less work.
-                // let s: Vec<_> = cs
-                //     .iter()
-                //     .map(|x| x["state"]["waiting"]["reason"].as_str().unwrap())
-                //     .filter(|y| y != &"Running")
-                //     .collect();
-                // if !s.is_empty() {
-                //     let status = &s.join(", ");
-                // }
-                // match cs[0]["state"]["waiting"]["reason"].as_str() {
-                //     Some(inner) => status = inner,
-                //     _ => {}
-                // }
             }
-
-            // state
-            // println!("status: {}", status);
 
             // restarts || pod['status']['containerStatuses'][0]['restartCount']
             let restartcount: i64 = cs
@@ -215,10 +176,7 @@ fn main() {
                 .collect::<Vec<i64>>()
                 .iter()
                 .sum::<i64>();
-            // let restartcount = cs[0]["restartCount"].as_i64().unwrap();
-            // println!("restarts: {}", restartcount);
 
-            // age || datetime.now(timezone.utc) - datetime.fromisoformat(pod['metadata']['creationTimestamp'])
             let creationtime = n["metadata"]["creationTimestamp"].as_str().unwrap();
             let datetime: DateTime<Utc> = creationtime.parse().unwrap();
             let diff = chrono::offset::Utc::now() - datetime;
@@ -228,8 +186,6 @@ fn main() {
             let re = Regex::new(r" \d+[mu]s").unwrap();
             let time_diff_str = format_duration(diff.to_std().unwrap()).to_string();
             let s_replaced = re.replace_all(&time_diff_str, "");
-            // println!("age: {}", s_replaced);
-            // println!("age: {}", format_duration(diff.to_std().unwrap()));
 
             // image || "\n".join(list(map( lambda x: str(better_pods(x['image'])) , pod['spec']['containers'])))
             let mut images: Vec<String> = vec![];
@@ -244,12 +200,6 @@ fn main() {
             let mut images_sorted: Vec<String> = images.clone();
             images_sorted.sort_unstable();
             images_sorted.dedup();
-
-            // if images.len() == 1 {
-            //     println!("Image: {}", images[0]);
-            // } else {
-            //     println!("Images: {:?}", images);
-            // }
 
             // make containerscount and ready to a string of X/Y
             let containerstatus = format!("{}/{}", containersready, containerscount);
