@@ -5,7 +5,10 @@ use clap::{Parser, Subcommand};
 use humantime::format_duration;
 use itertools::Itertools;
 use regex::Regex;
+use serde_json::Map;
 use serde_json::Value;
+use std::collections::HashMap;
+// use std::collections::HashSet;
 use std::process;
 use std::process::Command;
 use tabled::settings::{object::Columns, object::Rows, Disable, Padding, Style, Theme};
@@ -24,6 +27,7 @@ struct Pod {
     status: String,
     restarts: i64,
     age: String,
+    securitybits: String,
     images: String,
 }
 
@@ -33,6 +37,7 @@ fn build_pod(
     status: String,
     restarts: i64,
     age: String,
+    securitybits: String,
     images: String,
 ) -> Pod {
     Pod {
@@ -41,6 +46,7 @@ fn build_pod(
         status,
         restarts,
         age,
+        securitybits,
         images,
     }
 }
@@ -63,6 +69,152 @@ enum Commands {
         namespace: Option<String>,
     },
 }
+
+pub struct PodSecurityContext {
+    user: i64,
+    group: i64,
+    fsgroup: i64,
+    runasnonroot: bool,
+    seccomp: bool,
+    seccomp_runtimedef: bool,
+}
+
+impl std::fmt::Display for PodSecurityContext {
+    fn fmt(&self, fmt: &mut std::fmt::Formatter<'_>) -> Result<(), std::fmt::Error> {
+        write!(fmt, "My user is {}.", self.printuid())
+    }
+}
+
+impl PodSecurityContext {
+    pub fn new(someinput: &Map<String, Value>) -> PodSecurityContext {
+        let mut seccomp = false;
+        let mut seccomp_runtimedef = false;
+        let mut kvs = HashMap::new();
+        let mut runasnonroot: bool = false;
+
+        for key in ["runAsUser", "fsGroup", "runAsGroup"] {
+            kvs.insert(key, 0);
+            if someinput.contains_key(key) {
+                if let Some(value) = someinput[key].as_i64() {
+                    kvs.insert(key, value);
+                }
+            }
+        }
+
+        if someinput.contains_key("seccompProfile") {
+            seccomp = true;
+            let seccy = someinput["seccompProfile"].as_object().unwrap();
+            // println!("seccomp is {:?}", seccy);
+            if seccy.contains_key("type") && seccy["type"].as_str().unwrap() == "RuntimeDefault" {
+                seccomp_runtimedef = true;
+            }
+        }
+
+        if someinput.contains_key("runAsNonRoot") {
+            if let Some(value) = someinput["runAsNonRoot"].as_bool() {
+                runasnonroot = value;
+            }
+        }
+
+        PodSecurityContext {
+            user: kvs.get("runAsUser").copied().unwrap_or(0),
+            group: kvs.get("runAsGroup").copied().unwrap_or(0),
+            fsgroup: kvs.get("fsGroup").copied().unwrap_or(0),
+            runasnonroot,
+            seccomp,
+            seccomp_runtimedef,
+        }
+    }
+
+    fn sameuid(&self) -> bool {
+        self.user == self.group && self.group == self.fsgroup && self.user == self.fsgroup
+    }
+
+    pub fn printuid(&self) -> String {
+        if self.sameuid() {
+            self.user.to_string()
+        } else {
+            format!("{}/{}/{}", self.user, self.group, self.fsgroup)
+        }
+    }
+
+    pub fn getsecbits(&self) -> String {
+        let mut output = String::new();
+
+        if self.runasnonroot {
+            output.push_str("R✅");
+        } else {
+            output.push_str("R😭");
+        }
+
+        if self.seccomp {
+            output.push('👮');
+            if self.seccomp_runtimedef {
+                output.push_str("⚙️");
+            }
+            output.push(' ');
+        }
+
+        output.push_str(&self.printuid());
+
+        output
+    }
+}
+
+/*
+fn _mangle_security_contexts(someinput: Map<String, Value>) -> &'static str {
+    // let user: Option<i64>;
+    // let group: Option<i64>;
+    // let fsgroup: Option<i64>;
+    let mut runasnonroot: bool = false;
+    let mut uids: HashSet<i64> = HashSet::new();
+    let mut seccomp = false;
+    let mut seccomp_runtimedef = false;
+
+    if someinput.is_empty() {
+        return "";
+    }
+
+    for key in ["runAsUser", "fsGroup", "runAsGroup"] {
+        if someinput.contains_key(key) {
+            if let Some(value) = someinput[key].as_i64() {
+                uids.insert(value);
+            }
+        }
+    }
+
+    if someinput.contains_key("runAsNonRoot") {
+        if let Some(value) = someinput["runAsNonRoot"].as_bool() {
+            runasnonroot = value;
+        }
+    }
+
+    if someinput.contains_key("seccompProfile") {
+        let seccy = someinput["seccompProfile"].as_object().unwrap();
+        seccomp = true;
+        println!("seccomp is {:?}", seccy);
+        if seccy.contains_key("type") && seccy["type"].as_str().unwrap() == "RuntimeDefault" {
+            println!("We're using runtime default");
+            seccomp_runtimedef = true;
+        }
+    }
+
+    // output ""logic""
+    if uids.len() == 1 {
+        println!("Everything running as {}", uids.iter().next().unwrap());
+        // } else {
+    }
+
+    if runasnonroot {
+        println!("running as non-root for sure");
+    }
+    println!("what: {:?}", someinput);
+
+    // pretend bit pattern?
+
+    return "lol";
+}
+*/
 
 fn main() {
     let mut tidepods: Vec<Pod> = vec![];
@@ -195,6 +347,13 @@ fn main() {
                 images.push(shorter_image.to_string());
             }
 
+            let sec = n["spec"]["securityContext"].as_object().unwrap();
+            // if !sec.is_empty() {
+            //     println!("securities for {} are {:?}", name, sec);
+            // }
+            // mangle_security_contexts(sec.clone());
+            let xxx = PodSecurityContext::new(sec);
+
             // we could return them all? but returning a unique list is going to save space. And
             // this is meant to be as similar to `get pods` as possible
             let mut images_sorted: Vec<String> = images.clone();
@@ -210,6 +369,7 @@ fn main() {
                 status.to_string(),
                 restartcount,
                 s_replaced.to_string(),
+                xxx.getsecbits().to_string(),
                 images_sorted.join("\n"),
             ))
         }
