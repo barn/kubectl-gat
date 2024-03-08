@@ -1,4 +1,3 @@
-// use serde::{Deserialize, Serialize};
 use chrono::DateTime;
 use chrono::Utc;
 use clap::{Parser, Subcommand};
@@ -78,6 +77,93 @@ pub struct PodSecurityContext {
     seccomp_runtimedef: bool,
 }
 
+#[derive(Debug)]
+pub struct ContainerSecurityContext {
+    allowpriv: bool,
+    dropping: bool,
+    readonlyfs: bool,
+    drops: Vec<String>,
+    adds: Vec<String>,
+}
+
+impl ContainerSecurityContext {
+    pub fn new(someinput: &Map<String, Value>) -> ContainerSecurityContext {
+        let mut has_allow_privesc: bool = true;
+        let mut has_dropping: bool = false;
+        let mut caps_we_drop: Vec<String> = vec![];
+        let mut caps_we_add: Vec<String> = vec![];
+
+        // if let Some(t) = c["securityContext"].as_object() {
+        //     println!("no idea {:?}", t);
+        if someinput.contains_key("allowPrivilegeEscalation") {
+            if let Some(t) = someinput["allowPrivilegeEscalation"].as_bool() {
+                has_allow_privesc = t;
+            }
+        }
+
+        if someinput.contains_key("capabilities") {
+            if let Some(t) = someinput["capabilities"].as_object() {
+                has_dropping = true;
+                // println!("we got {:?}", t);
+
+                if t.contains_key("drop") {
+                    if let Some(kdrops) = t["drop"].as_array() {
+                        for k in kdrops {
+                            if let Some(something) = k.as_str() {
+                                caps_we_drop.push(something.to_string());
+                            }
+                        }
+                    }
+                }
+                if t.contains_key("add") {
+                    if let Some(kadds) = t["add"].as_array() {
+                        for k in kadds {
+                            if let Some(something) = k.as_str() {
+                                caps_we_add.push(something.to_string());
+                            }
+                        }
+                    }
+                }
+            }
+        }
+
+        ContainerSecurityContext {
+            allowpriv: has_allow_privesc,
+            readonlyfs: false,
+            dropping: has_dropping,
+            drops: caps_we_drop,
+            adds: caps_we_add,
+        }
+    }
+    pub fn dropping_all(&self) -> bool {
+        self.dropping && self.drops.len() == 1 && self.adds.is_empty() && self.drops[0] == "ALL"
+    }
+    pub fn getsecbits(&self) -> String {
+        let mut output = String::new();
+
+        if !self.allowpriv {
+            output.push('🔐')
+        } else {
+            output.push_str("␛ ")
+        };
+
+        if self.dropping_all() {
+            output.push('🫳');
+        }
+
+        output
+    }
+}
+
+impl std::fmt::Display for ContainerSecurityContext {
+    fn fmt(&self, fmt: &mut std::fmt::Formatter<'_>) -> Result<(), std::fmt::Error> {
+        write!(
+            fmt,
+            "allowpriv {}, readonlyfs {}, is dropping {}.\n    dropping: {:?}/adding: {:?}",
+            self.allowpriv, self.readonlyfs, self.dropping, self.drops, self.adds
+        )
+    }
+}
 impl std::fmt::Display for PodSecurityContext {
     fn fmt(&self, fmt: &mut std::fmt::Formatter<'_>) -> Result<(), std::fmt::Error> {
         write!(fmt, "My user is {}.", self.printuid())
@@ -159,61 +245,6 @@ impl PodSecurityContext {
         output
     }
 }
-
-/*
-fn _mangle_security_contexts(someinput: Map<String, Value>) -> &'static str {
-    // let user: Option<i64>;
-    // let group: Option<i64>;
-    // let fsgroup: Option<i64>;
-    let mut runasnonroot: bool = false;
-    let mut uids: HashSet<i64> = HashSet::new();
-    let mut seccomp = false;
-    let mut seccomp_runtimedef = false;
-
-    if someinput.is_empty() {
-        return "";
-    }
-
-    for key in ["runAsUser", "fsGroup", "runAsGroup"] {
-        if someinput.contains_key(key) {
-            if let Some(value) = someinput[key].as_i64() {
-                uids.insert(value);
-            }
-        }
-    }
-
-    if someinput.contains_key("runAsNonRoot") {
-        if let Some(value) = someinput["runAsNonRoot"].as_bool() {
-            runasnonroot = value;
-        }
-    }
-
-    if someinput.contains_key("seccompProfile") {
-        let seccy = someinput["seccompProfile"].as_object().unwrap();
-        seccomp = true;
-        println!("seccomp is {:?}", seccy);
-        if seccy.contains_key("type") && seccy["type"].as_str().unwrap() == "RuntimeDefault" {
-            println!("We're using runtime default");
-            seccomp_runtimedef = true;
-        }
-    }
-
-    // output ""logic""
-    if uids.len() == 1 {
-        println!("Everything running as {}", uids.iter().next().unwrap());
-        // } else {
-    }
-
-    if runasnonroot {
-        println!("running as non-root for sure");
-    }
-    println!("what: {:?}", someinput);
-
-    // pretend bit pattern?
-
-    return "lol";
-}
-*/
 
 fn main() {
     let mut tidepods: Vec<Pod> = vec![];
@@ -379,6 +410,18 @@ fn main() {
                     }
                 }
                 images.push(newimagestring);
+
+                if let Some(t) = c["securityContext"].as_object() {
+                    let xxyy = ContainerSecurityContext::new(t);
+                    security_bits.push_str(&xxyy.getsecbits());
+                    break;
+                    // if xxyy.dropping_all() {
+                    //     println!("🎉");
+                    // } else {
+                    //     println!("boooooo");
+                    // }
+                    // println!("printy print {}", xxyy);
+                }
             }
 
             let sec = n["spec"]["securityContext"].as_object().unwrap();
@@ -387,6 +430,7 @@ fn main() {
             // }
             // mangle_security_contexts(sec.clone());
             let xxx = PodSecurityContext::new(sec);
+            security_bits.push_str(&xxx.getsecbits().to_string());
 
             // we could return them all? but returning a unique list is going to save space. And
             // this is meant to be as similar to `get pods` as possible
@@ -403,7 +447,7 @@ fn main() {
                 status.to_string(),
                 restartcount,
                 s_replaced.to_string(),
-                xxx.getsecbits().to_string(),
+                security_bits,
                 images_sorted.join("\n"),
             ))
         }
