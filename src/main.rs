@@ -9,13 +9,12 @@ use serde_json::Map;
 use serde_json::Value;
 use std::collections::HashMap;
 // use std::collections::HashSet;
+use config::{Config, File};
 use std::process;
 use std::process::Command;
 use tabled::settings::{object::Columns, object::Rows, Disable, Padding, Style, Theme};
 use tabled::{Table, Tabled};
-
-const WORK_ECR: &str = "***REMOVED***";
-const WORK_ECR_SHORT: &str = "<clr-ecr>";
+extern crate dirs;
 
 // Pascal is "Keep all letters uppercase and indicate word boundaries with underscores."
 #[derive(Tabled)]
@@ -218,6 +217,7 @@ fn _mangle_security_contexts(someinput: Map<String, Value>) -> &'static str {
 
 fn main() {
     let mut tidepods: Vec<Pod> = vec![];
+    let mut ecr_renames: HashMap<String, String> = HashMap::new();
 
     let args = Cli::parse();
 
@@ -240,6 +240,29 @@ fn main() {
             }
             // println!("'kubectl get pods' was used, name is: {}", name);
         }
+    }
+
+    let filename = dirs::home_dir()
+        .unwrap()
+        .join(".config")
+        .join("kubectlgat.toml");
+    if filename.exists() {
+        let settingz = Config::builder()
+            .add_source(File::from(filename))
+            .build()
+            .unwrap();
+
+        // for (key, val) in settingz.get_table("renames").unwrap().iter() {
+        //     ecr_renames.insert(key.clone(), val.to_string());
+        //     // println!("we have a {} and a {}", key, val.to_string());
+        // }
+        settingz
+            .get_table("renames")
+            .unwrap_or(HashMap::new())
+            .iter()
+            .for_each(|(k, v)| {
+                ecr_renames.insert(k.clone(), v.to_string());
+            });
     }
 
     // we have a whole subcommand mess, and then just call 'get pods' anyway
@@ -341,10 +364,21 @@ fn main() {
 
             // image || "\n".join(list(map( lambda x: str(better_pods(x['image'])) , pod['spec']['containers'])))
             let mut images: Vec<String> = vec![];
-            let ree = Regex::new(WORK_ECR).unwrap();
+
+            let mut security_bits = String::new();
             for c in n["spec"]["containers"].as_array().unwrap() {
-                let shorter_image = ree.replace_all(c["image"].as_str().unwrap(), WORK_ECR_SHORT);
-                images.push(shorter_image.to_string());
+                let curimagestring = c["image"].as_str().unwrap();
+                let mut newimagestring = curimagestring.to_string();
+
+                for (big, smol) in &ecr_renames {
+                    let ree = Regex::new(big).unwrap();
+                    let shorter_image = ree.replace_all(curimagestring, format!("<{}>", smol));
+                    newimagestring = shorter_image.to_string();
+                    if newimagestring != curimagestring {
+                        break;
+                    }
+                }
+                images.push(newimagestring);
             }
 
             let sec = n["spec"]["securityContext"].as_object().unwrap();
