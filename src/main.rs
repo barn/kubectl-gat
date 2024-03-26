@@ -331,9 +331,13 @@ fn main() {
 
             // we reference containerstatuses so many times, it makes sense just to carve this off
             // and go with it.
-            let cs = n["status"]["containerStatuses"]
-                .as_array()
-                .expect("Didnt get a containerStatus");
+            let cs: &Vec<Value> = match n["status"]["containerStatuses"].as_array() {
+                Some(_vvv) => _vvv,
+                None => {
+                    // if we don't have one, skip to the next rather than panicking
+                    continue;
+                }
+            };
 
             let mut containersready: i32 = 0;
             let containerscount = cs.len() as i32;
